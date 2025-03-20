@@ -12,7 +12,7 @@ from PyQt5.QtCore import Qt, pyqtSlot, pyqtSignal
 from gui.subMessageViewer import SubscriberMessageViewer
 from gui.subUtils import JsonTreeDialog
 from wamp.subscriber import start_subscriber
-from gui.utils import log_to_file  # Reutilizamos log_to_file desde utils.py
+from gui.utils import log_to_file  # Reutilizamos log_to_file desde utils.py   
 
 class SubscriberTab(QWidget):
     messageReceived = pyqtSignal(str, str, str, str)  # (realm, topic, timestamp, details)
