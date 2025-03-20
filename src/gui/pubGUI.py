@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from gui.pubMessageConfigWidget import MessageConfigWidget
 from gui.pubMessageViewer import PublisherMessageViewer
+from services.config_loader import load_realm_topic_config
 
 class PublisherTab(QWidget):
     def __init__(self, parent=None):
@@ -63,31 +64,26 @@ class PublisherTab(QWidget):
         self.setLayout(layout)
 
     def loadGlobalRealmTopicConfig(self):
-        config_path = os.path.join(os.path.dirname(__file__), "..", "config", "realm_topic_config.json")
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    realms_dict = {}
-                    for item in data:
-                        realm = item.get("realm")
-                        if realm:
-                            realms_dict[realm] = {
-                                "router_url": item.get("router_url", "ws://127.0.0.1:60001/ws"),
-                                "topics": item.get("topics", [])
-                            }
-                    data = {"realms": realms_dict}
-                self.realms_topics = data.get("realms", {})
-                self.realm_configs = {realm: info.get("router_url", "ws://127.0.0.1:60001/ws")
-                                      for realm, info in self.realms_topics.items()}
-                print("Configuración global de realms/topics cargada (publicador).")
-                for widget in self.msgWidgets:
-                    widget.updateRealmsTopics(self.realms_topics)
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"No se pudo cargar realm_topic_config.json:\n{e}")
-        else:
-            QMessageBox.warning(self, "Advertencia", "No se encontró realm_topic_config.json.")
+        try:
+            data = load_realm_topic_config()
+            # Si la configuración viene como lista, la transformamos a diccionario.
+            if isinstance(data, list):
+                realms_dict = {}
+                for item in data:
+                    realm = item.get("realm")
+                    if realm:
+                        realms_dict[realm] = {
+                            "router_url": item.get("router_url", "ws://127.0.0.1:60001"),
+                            "topics": item.get("topics", [])
+                        }
+                data = {"realms": realms_dict}
+            self.realms_topics = data.get("realms", {})
+            print("Configuración global de realms/topics cargada (publicador).")
+            # Actualizamos la interfaz de este tab (por ejemplo, rellenando las tablas)
+            for widget in self.msgWidgets:
+                widget.updateRealmsTopics(self.realms_topics)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cargar la configuración:\n{e}")
 
     def addMessage(self):
         widget = MessageConfigWidget(self.next_id, self)
@@ -114,58 +110,56 @@ class PublisherTab(QWidget):
             QMessageBox.warning(self, "Advertencia", "No hay mensajes configurados para publicar.")
             return
 
-        config = self.msgWidgets[0].getConfig()
+        for widget in self.msgWidgets:
+            config = widget.getConfig()
+            print(f"Configuración del mensaje {config.get('msg_id')}:")
+            print(f"🔎 Realms: {config.get('realms')}")
+            print(f"🔎 Topics: {config.get('topics')}")
 
-        print(f"🔎 Estructura de realms en config: {config.get('realms')}")
-        print(f"🔎 Estructura de topics en config: {config.get('topics')}")
-
-        if not config or not config.get("realms") or all(len(config["topics"].get(r, [])) == 0 for r in config["realms"]):
-            QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para el publicador.")
-            print("❌ No se encontraron realms o topics para publicar.")
-            return
-
-        all_realms = []
-        all_topics = []
-
-        realms_data = config["realms"]
-        topics_data = config["topics"]
-
-        if isinstance(realms_data, list):
-            realms_data = {entry: {"router_url": self.realm_configs.get(entry, "ws://127.0.0.1:60001"),
-                                    "topics": topics_data.get(entry, [])} for entry in realms_data}
-
-        print(f"📌 Realms procesados: {realms_data}")
-
-        for realm, realm_data in realms_data.items():
-            if not isinstance(realm_data, dict):
-                print(f"⚠️ Error: realm_data para {realm} no es un diccionario. Valor recibido: {realm_data}")
+            if not config or not config.get("realms") or all(len(config["topics"].get(r, [])) == 0 for r in config["realms"]):
+                QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para este mensaje.")
                 continue
 
-            router_url = realm_data.get("router_url", "ws://127.0.0.1:60001/ws")
-            topics = realm_data.get("topics", [])
-            if not isinstance(topics, list):
-                print(f"⚠️ Error: topics en {realm} no es una lista. Valor recibido: {topics}")
-                topics = []
+            # Procesar cada realm del mensaje actual
+            all_realms = []
+            all_topics = []
+            realms_data = config["realms"]
+            topics_data = config["topics"]
 
-            if topics:
-                all_realms.append(realm)
-                all_topics.append(f"{realm}: {', '.join(topics)}")
-                for topic in topics:
-                    from tu_paquete.wamp.publisher import start_publisher
-                    start_publisher(router_url, realm, topic)
+            # Asegurarse de que realms_data es un diccionario
+            if isinstance(realms_data, list):
+                realms_data = {entry: {"router_url": self.realm_configs.get(entry, "ws://127.0.0.1:60001"),
+                                        "topics": topics_data.get(entry, [])} for entry in realms_data}
 
-        if all_realms and all_topics:
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_info = {
-                "action": "start_publisher",
-                "realms": all_realms,
-                "topics": all_topics
-            }
-            details = json.dumps(log_info, indent=2, ensure_ascii=False)
-            self.viewer.add_message(all_realms, all_topics, timestamp, details)
-            print(f"✅ Publicador iniciado en realms {all_realms} con topics {all_topics} a las {timestamp}")
-        else:
-            QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para el publicador.")
+            for realm, realm_data in realms_data.items():
+                if not isinstance(realm_data, dict):
+                    continue
+
+                router_url = realm_data.get("router_url", "ws://127.0.0.1:60001")
+                topics = realm_data.get("topics", [])
+                if not isinstance(topics, list):
+                    topics = []
+
+                if topics:
+                    all_realms.append(realm)
+                    all_topics.append(f"{realm}: {', '.join(topics)}")
+                    for topic in topics:
+                        start_publisher(router_url, realm, topic)
+
+            if all_realms and all_topics:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log_info = {
+                    "action": "start_publisher",
+                    "realms": all_realms,
+                    "topics": all_topics
+                }
+                details = json.dumps(log_info, indent=2, ensure_ascii=False)
+                self.viewer.add_message(all_realms, all_topics, timestamp, details)
+                print(f"✅ Publicador iniciado para el mensaje {config.get('msg_id')} en realms {all_realms} con topics {all_topics} a las {timestamp}")
+            else:
+                QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para el mensaje.")
+
+
 
     def sendAllAsync(self):
         for widget in self.msgWidgets:
