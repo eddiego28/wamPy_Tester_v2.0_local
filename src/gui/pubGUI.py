@@ -105,60 +105,63 @@ class PublisherTab(QWidget):
             widget.deleteLater()
 
     def startPublisher(self):
-        """ Inicia el publicador con los mensajes configurados """
-        if not self.msgWidgets:
-            QMessageBox.warning(self, "Advertencia", "No hay mensajes configurados para publicar.")
-            return
+    """Inicia el publicador con los mensajes configurados."""
+    if not self.msgWidgets:
+        QMessageBox.warning(self, "Advertencia", "No hay mensajes configurados para publicar.")
+        return
 
-        for widget in self.msgWidgets:
-            config = widget.getConfig()
-            print(f"Configuración del mensaje {config.get('msg_id')}:")
-            print(f"🔎 Realms: {config.get('realms')}")
-            print(f"🔎 Topics: {config.get('topics')}")
+    # Se toma la configuración del primer mensaje (puedes modificar para iterar sobre todos)
+    config = self.msgWidgets[0].getConfig()
 
-            if not config or not config.get("realms") or all(len(config["topics"].get(r, [])) == 0 for r in config["realms"]):
-                QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para este mensaje.")
-                continue
+    # Depuración: imprimir estructuras de realms y topics
+    print(f"🔎 Estructura de realms en config: {config.get('realms')}")
+    print(f"🔎 Estructura de topics en config: {config.get('topics')}")
 
-            # Procesar cada realm del mensaje actual
-            all_realms = []
-            all_topics = []
-            realms_data = config["realms"]
-            topics_data = config["topics"]
+    # Validar que exista al menos un realm y que para cada realm haya topics configurados
+    if not config or not config.get("realms") or all(len(config["topics"].get(r, [])) == 0 for r in config["realms"]):
+        QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para el publicador.")
+        print("❌ No se encontraron realms o topics para publicar.")
+        return
 
-            # Asegurarse de que realms_data es un diccionario
-            if isinstance(realms_data, list):
-                realms_data = {entry: {"router_url": self.realm_configs.get(entry, "ws://127.0.0.1:60001"),
-                                        "topics": topics_data.get(entry, [])} for entry in realms_data}
+    all_realms = []
+    all_topics = []
 
-            for realm, realm_data in realms_data.items():
-                if not isinstance(realm_data, dict):
-                    continue
+    # Se asume que config["realms"] es una lista de nombres y config["topics"] es un diccionario
+    realms_data = config["realms"]
+    topics_data = config["topics"]
 
-                router_url = realm_data.get("router_url", "ws://127.0.0.1:60001")
-                topics = realm_data.get("topics", [])
-                if not isinstance(topics, list):
-                    topics = []
+    print(f"📌 Realms procesados: {realms_data}")
 
-                if topics:
-                    all_realms.append(realm)
-                    all_topics.append(f"{realm}: {', '.join(topics)}")
-                    for topic in topics:
-                        start_publisher(router_url, realm, topic)
+    # Iterar sobre cada realm configurado
+    for realm in realms_data:
+        # Obtener la URL del router para el realm usando self.realm_configs
+        realm_info = self.realm_configs.get(realm, {"router_url": "ws://127.0.0.1:60001/ws"})
+        router_url = realm_info.get("router_url", "ws://127.0.0.1:60001/ws")
+        topics = topics_data.get(realm, [])
+        if not isinstance(topics, list):
+            print(f"⚠️ Error: topics en {realm} no es una lista. Valor recibido: {topics}")
+            topics = []  # Forzamos a lista vacía
 
-            if all_realms and all_topics:
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                log_info = {
-                    "action": "start_publisher",
-                    "realms": all_realms,
-                    "topics": all_topics
-                }
-                details = json.dumps(log_info, indent=2, ensure_ascii=False)
-                self.viewer.add_message(all_realms, all_topics, timestamp, details)
-                print(f"✅ Publicador iniciado para el mensaje {config.get('msg_id')} en realms {all_realms} con topics {all_topics} a las {timestamp}")
-            else:
-                QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para el mensaje.")
+        if topics:
+            all_realms.append(realm)
+            all_topics.append(f"{realm}: {', '.join(topics)}")
+            # Para cada topic en el realm, se inicia el publicador
+            for topic in topics:
+                start_publisher(router_url, realm, topic)
 
+    # Registrar el inicio del publicador en el visor (log)
+    if all_realms and all_topics:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_info = {
+            "action": "start_publisher",
+            "realms": all_realms,
+            "topics": all_topics
+        }
+        details = json.dumps(log_info, indent=2, ensure_ascii=False)
+        self.viewer.add_message(all_realms, all_topics, timestamp, details)
+        print(f"✅ Publicador iniciado en realms {all_realms} con topics {all_topics} a las {timestamp}")
+    else:
+        QMessageBox.warning(self, "Advertencia", "No hay realms o topics configurados para el publicador.")
 
 
     def sendAllAsync(self):
