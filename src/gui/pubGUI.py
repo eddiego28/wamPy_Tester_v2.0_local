@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from autobahn.asyncio.wamp import ApplicationSession, ApplicationRunner
-from common.utils import log_to_file  # Se asume que log_to_file escribe en un log con los parámetros: timestamp, realm, topic, mensaje
+from common.utils import log_to_file  # Se asume que log_to_file(timestamp, realm, topic, message_json) está definido
 from pubEditor import PublisherEditorWidget  # Editor JSON
 
 # Variables globales para la sesión del publicador
@@ -42,7 +42,7 @@ def start_publisher(url, realm, topic):
 
 # --------------------------------------------------------------------
 # send_message_now: envía el mensaje con delay (opcional)
-# Se recibe el realm para registrar correctamente el log.
+# Ahora recibe el realm para que el log se registre correctamente.
 # --------------------------------------------------------------------
 def send_message_now(realm, topic, message, delay=0):
     global global_session, global_loop
@@ -58,13 +58,13 @@ def send_message_now(realm, topic, message, delay=0):
             global_session.publish(topic, message)
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         message_json = json.dumps(message, indent=2, ensure_ascii=False)
-        # Usamos el realm correcto para el log
+        # Se utiliza el realm correcto para el log
         log_to_file(timestamp, realm, topic, message_json)
         print("Mensaje enviado en topic", topic, "del realm", realm, ":", message)
     asyncio.run_coroutine_threadsafe(_send(), global_loop)
 
 # --------------------------------------------------------------------
-# Función auxiliar para calcular el delay según el modo y el campo de tiempo.
+# compute_delay: calcula el delay según el modo y el campo de tiempo.
 # --------------------------------------------------------------------
 def compute_delay(mode, time_str):
     now = datetime.datetime.now()
@@ -187,7 +187,7 @@ class MessageConfigWidget(QGroupBox):
         self.toggled.connect(self.toggleContent)
         layout = QVBoxLayout(self)
 
-        # Panel izquierdo: tabla de realms y topics
+        # Panel izquierdo: tablas de realms y topics
         hLayout = QHBoxLayout()
         leftPanel = QVBoxLayout()
         self.realmTable = QTableWidget(0, 2)
@@ -378,21 +378,24 @@ class MessageConfigWidget(QGroupBox):
             "content": content,
             "mode": mode,
             "time": time_str,
-            "router_url": self.realmTable.item(0,1).text().strip() if self.realmTable.rowCount() > 0 else "ws://127.0.0.1:60001/ws"
+            "router_url": self.realmTable.item(0, 1).text().strip() if self.realmTable.rowCount() > 0 else "ws://127.0.0.1:60001/ws"
         }
 
     def sendMessage(self):
         config = self.getConfig()
         print("Configuración del mensaje:", config)
-        # Calcular delay según el modo
         delay = compute_delay(config.get("mode", "Enviar instantáneo"), config.get("time", "00:00:00"))
         realms = config.get("realms", [])
         for realm in realms:
-            router_url = config.get("router_url")  # Se puede obtener del widget o de realm_configs
+            router_url = config.get("router_url")  # Se usa la URL del widget
             topics = config.get("topics", {}).get(realm, [])
             for topic in topics:
                 send_message_now(realm, topic, config.get("content", {}), delay=delay)
-        # Se puede agregar registro en el visor si se desea
+        # Opcional: se podría registrar en el visor
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_info = {"action": "send_message", "realm": realms, "topics": config.get("topics", {})}
+        details = json.dumps(log_info, indent=2, ensure_ascii=False)
+        print(f"Mensaje enviado en realms {realms} y topics {config.get('topics', {})} a las {timestamp}")
 
 # --------------------------------------------------------------------
 # PublisherTab: interfaz principal del publicador.
@@ -402,8 +405,8 @@ class PublisherTab(QWidget):
         super().__init__(parent)
         self.msgWidgets = []
         self.next_id = 1
-        self.realms_topics = {}   # Se carga desde el JSON de configuración
-        self.realm_configs = {}   # Se carga desde el mismo JSON
+        self.realms_topics = {}   # Se carga desde el archivo de configuración JSON
+        self.realm_configs = {}   # Extraídas de la configuración
         self.initUI()
         self.loadGlobalRealmTopicConfig()
 
@@ -457,6 +460,7 @@ class PublisherTab(QWidget):
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                # Si la configuración viene como lista, la transformamos; de lo contrario usamos el diccionario
                 if isinstance(data, list):
                     realms_dict = {}
                     for item in data:
@@ -480,7 +484,7 @@ class PublisherTab(QWidget):
 
     def addMessage(self):
         widget = MessageConfigWidget(self.next_id, self)
-        widget.publisherTab = self  # Asigna la referencia para acceder al publicador
+        widget.publisherTab = self  # Asigna la referencia al publicador
         if self.realms_topics:
             widget.updateRealmsTopics(self.realms_topics)
         self.msgLayout.addWidget(widget)
@@ -498,8 +502,8 @@ class PublisherTab(QWidget):
             widget.deleteLater()
 
     def startPublisher(self):
-        # Antes de iniciar, cerrar la sesión activa para evitar acumulaciones.
         global global_session
+        # Cerrar la sesión activa para evitar acumulaciones
         if global_session is not None:
             try:
                 global_session.leave()
@@ -512,9 +516,10 @@ class PublisherTab(QWidget):
             QMessageBox.warning(self, "Advertencia", "No hay mensajes configurados para publicar.")
             return
 
-        # Para este ejemplo, tomamos la configuración del primer mensaje.
         config = self.msgWidgets[0].getConfig()
-        # Suponemos que config["realms"] es una lista y config["topics"] es un diccionario
+        if not config.get("realms"):
+            QMessageBox.warning(self, "Advertencia", "No se han seleccionado realms.")
+            return
         first_realm = config["realms"][0]
         topics_list = config["topics"].get(first_realm, [])
         if not topics_list:
@@ -522,6 +527,7 @@ class PublisherTab(QWidget):
             return
         first_topic = topics_list[0]
         router_url = config.get("router_url", self.realm_configs.get(first_realm, "ws://127.0.0.1:60001/ws"))
+        print(f"Iniciando publicador: router_url={router_url}, realm={first_realm}, topic={first_topic}")
         start_publisher(router_url, first_realm, first_topic)
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_info = {"action": "start_publisher", "realm": first_realm, "topic": first_topic}
@@ -550,38 +556,8 @@ class PublisherTab(QWidget):
         return {"scenarios": scenarios, "realm_configs": self.realm_configs}
 
     def loadProject(self):
-        # Método dummy para cargar proyecto (implementar según tus necesidades)
+        # Método dummy para cargar proyecto (implementar según necesidades)
         pass
-
-# --------------------------------------------------------------------
-# Función auxiliar para calcular delay según modo y tiempo
-# --------------------------------------------------------------------
-def compute_delay(mode, time_str):
-    now = datetime.datetime.now()
-    if mode == "Programado":
-        # Se interpreta el campo como duración
-        try:
-            h, m, s = map(int, time_str.split(":"))
-            delay = h * 3600 + m * 60 + s
-        except Exception as e:
-            print("Error en duración:", e)
-            delay = 0
-        return delay
-    elif mode == "Hora de sistema":
-        try:
-            h, m, s = map(int, time_str.split(":"))
-            target = now.replace(hour=h, minute=m, second=s, microsecond=0)
-            if target < now:
-                target += datetime.timedelta(days=1)
-            delay = (target - now).total_seconds()
-        except Exception as e:
-            print("Error en hora de sistema:", e)
-            delay = 0
-        return delay
-    elif mode == "Enviar instantáneo":
-        return 0
-    else:
-        return 0
 
 # --------------------------------------------------------------------
 # Fin de PublisherTab
