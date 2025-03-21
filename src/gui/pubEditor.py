@@ -1,8 +1,9 @@
 import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QTabWidget,
-    QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QPushButton, QMessageBox
+    QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QPushButton, QMessageBox, QFileDialog
 )
+from PyQt5.QtCore import Qt
 
 class PublisherEditorWidget(QWidget):
     def __init__(self, parent=None):
@@ -11,26 +12,42 @@ class PublisherEditorWidget(QWidget):
     
     def initUI(self):
         layout = QVBoxLayout(self)
-        # Campo para configurar el tiempo (usado para programar envíos)
-        timeLayout = QHBoxLayout()
-        timeLayout.addWidget(QLabel("Tiempo (HH:MM:SS):"))
+
+        # Layout para tiempo y modos de envío en una misma línea
+        timeModeLayout = QHBoxLayout()
+        timeLabel = QLabel("Tiempo (HH:MM:SS):")
+        timeModeLayout.addWidget(timeLabel)
         self.commonTimeEdit = QLineEdit("00:00:00")
-        timeLayout.addWidget(self.commonTimeEdit)
-        layout.addLayout(timeLayout)
-        
-        # Widget con pestañas para editar el JSON
+        timeModeLayout.addWidget(self.commonTimeEdit)
+
+        # Radio buttons para modos de envío
+        from PyQt5.QtWidgets import QRadioButton
+        self.onDemandRadio = QRadioButton("On-Demand")
+        self.programadoRadio = QRadioButton("Programado")
+        self.tiempoSistemaRadio = QRadioButton("Tiempo del Sistema")
+        self.onDemandRadio.setChecked(True)
+        timeModeLayout.addWidget(self.onDemandRadio)
+        timeModeLayout.addWidget(self.programadoRadio)
+        timeModeLayout.addWidget(self.tiempoSistemaRadio)
+        layout.addLayout(timeModeLayout)
+
+        # Widget de pestañas para la edición del JSON
         self.tabWidget = QTabWidget()
         
         # Pestaña de edición en texto JSON
         self.jsonTab = QWidget()
         jsonLayout = QVBoxLayout()
+        # Botón para cargar JSON desde archivo
+        loadJsonButton = QPushButton("Cargar JSON desde archivo")
+        loadJsonButton.clicked.connect(self.loadJsonFromFile)
+        jsonLayout.addWidget(loadJsonButton)
         self.jsonPreview = QPlainTextEdit()
         self.jsonPreview.setPlainText("{}")
         jsonLayout.addWidget(self.jsonPreview)
         self.jsonTab.setLayout(jsonLayout)
         self.tabWidget.addTab(self.jsonTab, "JSON")
         
-        # Pestaña con árbol para editar el JSON
+        # Pestaña con árbol para edición del JSON
         self.treeTab = QWidget()
         treeLayout = QVBoxLayout()
         self.jsonTree = QTreeWidget()
@@ -46,6 +63,16 @@ class PublisherEditorWidget(QWidget):
         layout.addWidget(self.tabWidget)
         self.setLayout(layout)
     
+    def loadJsonFromFile(self):
+        filepath, _ = QFileDialog.getOpenFileName(self, "Cargar JSON", "", "JSON Files (*.json);;All Files (*)")
+        if filepath:
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.jsonPreview.setPlainText(json.dumps(data, indent=2, ensure_ascii=False))
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Error al cargar JSON:\n{e}")
+
     def onTabChanged(self, index):
         if self.tabWidget.tabText(index) == "Árbol JSON":
             self.loadTreeFromJson()

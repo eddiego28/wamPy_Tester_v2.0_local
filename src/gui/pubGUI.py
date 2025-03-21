@@ -2,18 +2,36 @@ import sys, os, json, datetime, logging, asyncio, threading
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QPushButton, QSplitter,
-    QGroupBox, QFormLayout, QMessageBox, QLineEdit, QFileDialog, QComboBox, QRadioButton
+    QGroupBox, QFormLayout, QMessageBox, QLineEdit, QFileDialog, QComboBox
 )
 from PyQt5.QtCore import Qt, QTimer
 from autobahn.asyncio.wamp import ApplicationSession, ApplicationRunner
 from common.utils import log_to_file, JsonDetailDialog
 from .pubEditor import PublisherEditorWidget
 
-# Diccionario global con realms y sus topics asociados
-REALMS_TOPICS = {
-    "default": ["com.ads.midshmi.topic", "com.ads.midshmi.another"],
-    "ADS.MIDSHMI": ["com.ads.midshmi.topic", "com.ads.midshmi.special"]
-}
+# Variable global para la configuración de realms y topics
+REALMS_TOPICS = {}
+
+def load_realm_topic_config():
+    global REALMS_TOPICS
+    try:
+        # Se asume que el archivo de configuración está en <project_root>/config/realm_topic_config_pub.json
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(base_path, "..", "config", "realm_topic_config_pub.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            REALMS_TOPICS = json.load(f)
+        print("Configuración de realms y topics cargada desde", config_path)
+    except Exception as e:
+        print("Error al cargar configuración de realms y topics:", e)
+        # Configuración por defecto en caso de error
+        REALMS_TOPICS = {
+            "default": ["com.ads.midshmi.topic", "com.ads.midshmi.another"],
+            "ADS.MIDSHMI": ["com.ads.midshmi.topic", "com.ads.midshmi.special"]
+        }
+        print("Se usará configuración por defecto.")
+
+# Cargar la configuración al iniciar el módulo
+load_realm_topic_config()
 
 global_session = None
 global_loop = None
@@ -22,6 +40,7 @@ class JSONPublisher(ApplicationSession):
     def __init__(self, config, topic):
         super().__init__(config)
         self.topic = topic
+
     async def onJoin(self, details):
         global global_session, global_loop
         global_session = self
@@ -66,7 +85,7 @@ class PublisherMessageViewer(QWidget):
         layout = QVBoxLayout(self)
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        # Orden de columnas: Hora, Realm y Topic
+        # Orden de columnas: Hora, Realm, Topic
         self.table.setHorizontalHeaderLabels(["Hora", "Realm", "Topic"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -100,22 +119,27 @@ class PublisherTab(QWidget):
         self.initUI()
 
     def initUI(self):
-        layout = QVBoxLayout()
-        topLayout = QHBoxLayout()
-        self.addMsgButton = QPushButton("Agregar mensaje")
+        mainLayout = QVBoxLayout(self)
+
+        # Grupo de botones de acción
+        actionGroup = QGroupBox("Acciones")
+        actionLayout = QHBoxLayout()
+        self.addMsgButton = QPushButton("Agregar Mensaje")
         self.addMsgButton.clicked.connect(self.addMessage)
-        topLayout.addWidget(self.addMsgButton)
         self.asyncSendButton = QPushButton("Enviar Mensaje Asincrónico")
         self.asyncSendButton.clicked.connect(self.sendAllAsync)
-        topLayout.addWidget(self.asyncSendButton)
         self.loadProjectButton = QPushButton("Cargar Proyecto")
         self.loadProjectButton.clicked.connect(self.loadProject)
-        topLayout.addWidget(self.loadProjectButton)
         self.saveProjectButton = QPushButton("Guardar Proyecto")
         self.saveProjectButton.clicked.connect(self.saveProject)
-        topLayout.addWidget(self.saveProjectButton)
-        layout.addLayout(topLayout)
+        actionLayout.addWidget(self.addMsgButton)
+        actionLayout.addWidget(self.asyncSendButton)
+        actionLayout.addWidget(self.loadProjectButton)
+        actionLayout.addWidget(self.saveProjectButton)
+        actionGroup.setLayout(actionLayout)
+        mainLayout.addWidget(actionGroup)
 
+        # Splitter para áreas de mensajes y log
         splitter = QSplitter(Qt.Vertical)
         self.msgArea = QScrollArea()
         self.msgArea.setWidgetResizable(True)
@@ -127,21 +151,23 @@ class PublisherTab(QWidget):
         self.viewer = PublisherMessageViewer(self)
         splitter.addWidget(self.viewer)
         splitter.setSizes([500, 300])
-        layout.addWidget(splitter)
+        mainLayout.addWidget(splitter)
 
+        # Grupo de conexión
+        connGroup = QGroupBox("Conexión de Publicador")
         connLayout = QHBoxLayout()
         connLayout.addWidget(QLabel("Publicador Global"))
         self.globalStartButton = QPushButton("Iniciar Publicador")
         self.globalStartButton.clicked.connect(self.startPublisher)
         connLayout.addWidget(self.globalStartButton)
-        layout.addLayout(connLayout)
+        connGroup.setLayout(connLayout)
+        mainLayout.addWidget(connGroup)
 
-        layout.addWidget(QLabel("Resumen de mensajes enviados:"))
-        layout.addWidget(self.viewer)
-        self.setLayout(layout)
+        mainLayout.addWidget(QLabel("Resumen de mensajes enviados:"))
+        mainLayout.addWidget(self.viewer)
+        self.setLayout(mainLayout)
 
     def addMessage(self):
-        # Se crea un widget de configuración para cada mensaje
         widget = MessageConfigWidget(self.next_id, parent=self)
         self.msgLayout.addWidget(widget)
         self.msgWidgets.append(widget)
@@ -154,13 +180,9 @@ class PublisherTab(QWidget):
         for widget in self.msgWidgets:
             config = widget.getConfig()
             start_publisher(config["router_url"], config["realm"], config["topic"])
-            if widget.editorWidget.commonTimeEdit.text().strip() != "00:00:00":
-                try:
-                    h, m, s = map(int, widget.editorWidget.commonTimeEdit.text().strip().split(":"))
-                    delay = h * 3600 + m * 60 + s
-                except:
-                    delay = 0
-                QTimer.singleShot(delay * 1000, widget.sendMessage)
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.addPublisherLog(config["realm"], config["topic"], timestamp, "Publicador iniciado")
+            print("Publicador iniciado:", config["realm"], config["topic"])
 
     def sendAllAsync(self):
         for widget in self.msgWidgets:
@@ -206,16 +228,11 @@ class PublisherTab(QWidget):
             return
         pub_config = project.get("publisher", {})
         self.loadProjectFromConfig(pub_config)
-        from subscriber.subGUI import SubscriberTab
-        sub_config = project.get("subscriber", {})
-        if hasattr(self.parent(), "subscriberTab"):
-            self.parent().subscriberTab.loadProjectFromConfig(sub_config)
         QMessageBox.information(self, "Proyecto", "Proyecto cargado correctamente.")
 
     def saveProject(self):
         project_config = {
             "publisher": self.getProjectConfig()
-            # Se puede agregar configuración de suscriptor si es necesario.
         }
         filepath, _ = QFileDialog.getSaveFileName(self, "Guardar Proyecto", "", "JSON Files (*.json);;All Files (*)")
         if not filepath:
@@ -239,71 +256,60 @@ class MessageConfigWidget(QGroupBox):
         self.initUI()
 
     def initUI(self):
-        self.contentWidget = QWidget()
-        contentLayout = QVBoxLayout()
-        formLayout = QFormLayout()
-        
-        # Selección del realm con opción de agregar
+        # Layout general con grupos para aspecto profesional
+        mainLayout = QVBoxLayout()
+
+        # Grupo de configuración de conexión
+        connGroup = QGroupBox("Configuración de Conexión")
+        connLayout = QFormLayout()
         self.realmCombo = QComboBox()
         self.realmCombo.addItems(list(REALMS_TOPICS.keys()))
         self.realmCombo.setMinimumWidth(300)
         self.realmCombo.currentTextChanged.connect(self.updateTopics)
         self.newRealmEdit = QLineEdit()
         self.newRealmEdit.setPlaceholderText("Nuevo realm")
-        addRealmButton = QPushButton("Agregar realm")
+        addRealmButton = QPushButton("Agregar")
         addRealmButton.clicked.connect(self.addRealm)
         realmLayout = QHBoxLayout()
         realmLayout.addWidget(self.realmCombo)
         realmLayout.addWidget(self.newRealmEdit)
         realmLayout.addWidget(addRealmButton)
-        formLayout.addRow("Realm:", realmLayout)
-        
+        connLayout.addRow("Realm:", realmLayout)
+
         self.urlEdit = QLineEdit("ws://127.0.0.1:60001/ws")
-        formLayout.addRow("Router URL:", self.urlEdit)
-        
-        # Selección del topic (se actualiza según el realm)
+        connLayout.addRow("Router URL:", self.urlEdit)
+
         self.topicCombo = QComboBox()
         self.topicCombo.setEditable(True)
         self.topicCombo.addItems(REALMS_TOPICS.get(self.realmCombo.currentText(), []))
-        formLayout.addRow("Topic:", self.topicCombo)
-        
-        contentLayout.addLayout(formLayout)
-        
-        # Editor de mensaje JSON con dos pestañas
+        connLayout.addRow("Topic:", self.topicCombo)
+        connGroup.setLayout(connLayout)
+        mainLayout.addWidget(connGroup)
+
+        # Grupo de contenido del mensaje
+        contentGroup = QGroupBox("Contenido del Mensaje")
+        contentGroupLayout = QVBoxLayout()
+        from .pubEditor import PublisherEditorWidget
         self.editorWidget = PublisherEditorWidget(parent=self)
-        contentLayout.addWidget(self.editorWidget)
-        
-        # Selección del modo de envío
-        timeModeLayout = QHBoxLayout()
-        timeModeLayout.addWidget(QLabel("Modo de envío:"))
-        self.onDemandRadio = QRadioButton("On-Demand")
-        self.programadoRadio = QRadioButton("Programado")
-        self.tiempoSistemaRadio = QRadioButton("Tiempo del Sistema")
-        self.onDemandRadio.setChecked(True)
-        timeModeLayout.addWidget(self.onDemandRadio)
-        timeModeLayout.addWidget(self.programadoRadio)
-        timeModeLayout.addWidget(self.tiempoSistemaRadio)
-        contentLayout.addLayout(timeModeLayout)
-        
-        self.sendButton = QPushButton("Enviar")
+        contentGroupLayout.addWidget(self.editorWidget)
+        contentGroup.setLayout(contentGroupLayout)
+        mainLayout.addWidget(contentGroup)
+
+        # Botón de envío alineado a la derecha
+        btnLayout = QHBoxLayout()
+        btnLayout.addStretch()
+        self.sendButton = QPushButton("Enviar Mensaje")
         self.sendButton.clicked.connect(self.sendMessage)
-        # Habilitar o deshabilitar según el campo de tiempo
-        if self.editorWidget.commonTimeEdit.text().strip() == "00:00:00":
-            self.sendButton.setEnabled(True)
-        else:
-            self.sendButton.setEnabled(False)
-        contentLayout.addWidget(self.sendButton)
-        
-        self.contentWidget.setLayout(contentLayout)
-        mainLayout = QVBoxLayout()
-        mainLayout.addWidget(self.contentWidget)
+        btnLayout.addWidget(self.sendButton)
+        mainLayout.addLayout(btnLayout)
+
         self.setLayout(mainLayout)
 
     def addRealm(self):
         new_realm = self.newRealmEdit.text().strip()
         if new_realm and new_realm not in [self.realmCombo.itemText(i) for i in range(self.realmCombo.count())]:
             self.realmCombo.addItem(new_realm)
-            # Se agrega una lista vacía de topics para el nuevo realm
+            # Se añade un nuevo realm en la configuración global
             REALMS_TOPICS[new_realm] = []
             self.newRealmEdit.clear()
 
@@ -314,27 +320,27 @@ class MessageConfigWidget(QGroupBox):
         self.topicCombo.setEditable(True)
 
     def toggleContent(self, checked):
-        self.contentWidget.setVisible(checked)
+        # Al colapsar se muestra un resumen en el título
         if not checked:
             topic = self.topicCombo.currentText().strip()
-            time_val = self.editorWidget.commonTimeEdit.text()
-            self.setTitle(f"Mensaje #{self.msg_id} - {topic} - {time_val}")
+            self.setTitle(f"Mensaje #{self.msg_id} - {topic}")
         else:
             self.setTitle(f"Mensaje #{self.msg_id}")
 
     def sendMessage(self):
         if self.message_sent:
             return
-        if self.onDemandRadio.isChecked():
+        # Obtener el modo de envío y tiempo desde el editor (se encuentran en el mismo widget)
+        if self.editorWidget.onDemandRadio.isChecked():
             delay = 0
-        elif self.programadoRadio.isChecked():
+        elif self.editorWidget.programadoRadio.isChecked():
             try:
                 h, m, s = map(int, self.editorWidget.commonTimeEdit.text().strip().split(":"))
                 delay = h * 3600 + m * 60 + s
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Tiempo inválido para modo Programado:\n{e}")
                 return
-        elif self.tiempoSistemaRadio.isChecked():
+        elif self.editorWidget.tiempoSistemaRadio.isChecked():
             try:
                 h, m, s = map(int, self.editorWidget.commonTimeEdit.text().strip().split(":"))
             except Exception as e:
