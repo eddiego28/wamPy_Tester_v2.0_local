@@ -330,7 +330,7 @@ class MessageConfigWidget(QGroupBox):
         if hasattr(self.parent(), "addPublisherLog"):
             self.parent().addPublisherLog(self.realmCombo.currentText(), topic, publish_time_str, sent_message)
 
-    def getConfig(self):
+    def getConfig(self): #jlaksjdflñkdsj
         return {
             "id": self.msg_id,
             "realm": self.realmCombo.currentText(),
