@@ -19,8 +19,6 @@ class PublisherEditorWidget(QWidget):
         timeModeLayout.addWidget(timeLabel)
         self.commonTimeEdit = QLineEdit("00:00:00")
         timeModeLayout.addWidget(self.commonTimeEdit)
-
-        # Radio buttons para modos de envío
         from PyQt5.QtWidgets import QRadioButton
         self.onDemandRadio = QRadioButton("On-Demand")
         self.programadoRadio = QRadioButton("Programado")
@@ -37,7 +35,6 @@ class PublisherEditorWidget(QWidget):
         # Pestaña de edición en texto JSON
         self.jsonTab = QWidget()
         jsonLayout = QVBoxLayout()
-        # Botón para cargar JSON desde archivo
         loadJsonButton = QPushButton("Cargar JSON desde archivo")
         loadJsonButton.clicked.connect(self.loadJsonFromFile)
         jsonLayout.addWidget(loadJsonButton)

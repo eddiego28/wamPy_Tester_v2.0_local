@@ -9,28 +9,54 @@ from autobahn.asyncio.wamp import ApplicationSession, ApplicationRunner
 from common.utils import log_to_file, JsonDetailDialog
 from .pubEditor import PublisherEditorWidget
 
-# Variable global para la configuración de realms y topics
-REALMS_TOPICS = {}
+# --- CONFIGURACIÓN DE REALMS Y TOPICS ---
+# Se espera que el archivo /config/realm_topic_config_pub.json tenga la siguiente estructura:
+# {
+#   "realms": [
+#     {
+#       "realm": "default",
+#       "router_url": "ws://127.0.0.1:60001",
+#       "topics": ["MsgEP", "MsgCrEnt"]
+#     },
+#     {
+#       "realm": "default2",
+#       "router_url": "ws://127.0.0.1:60002",
+#       "topics": ["MsgInitCtr", "MsgAlerts"]
+#     }
+#   ]
+# }
+REALMS_CONFIG = {}
 
 def load_realm_topic_config():
-    global REALMS_TOPICS
+    global REALMS_CONFIG
     try:
-        # Se asume que el archivo de configuración está en <project_root>/config/realm_topic_config_pub.json
         base_path = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(base_path, "..", "config", "realm_topic_config_pub.json")
         with open(config_path, "r", encoding="utf-8") as f:
-            REALMS_TOPICS = json.load(f)
+            config = json.load(f)
+        # Se transforma la lista de realms en un diccionario para acceso rápido
+        for realm_info in config.get("realms", []):
+            realm_name = realm_info.get("realm", "default")
+            REALMS_CONFIG[realm_name] = {
+                "router_url": realm_info.get("router_url", "ws://127.0.0.1:60001"),
+                "topics": realm_info.get("topics", [])
+            }
         print("Configuración de realms y topics cargada desde", config_path)
     except Exception as e:
         print("Error al cargar configuración de realms y topics:", e)
-        # Configuración por defecto en caso de error
-        REALMS_TOPICS = {
-            "default": ["com.ads.midshmi.topic", "com.ads.midshmi.another"],
-            "ADS.MIDSHMI": ["com.ads.midshmi.topic", "com.ads.midshmi.special"]
+        # Configuración por defecto
+        REALMS_CONFIG = {
+            "default": {
+                "router_url": "ws://127.0.0.1:60001",
+                "topics": ["MsgEP", "MsgCrEnt"]
+            },
+            "default2": {
+                "router_url": "ws://127.0.0.1:60002",
+                "topics": ["MsgInitCtr", "MsgAlerts"]
+            }
         }
         print("Se usará configuración por defecto.")
 
-# Cargar la configuración al iniciar el módulo
 load_realm_topic_config()
 
 global_session = None
@@ -40,7 +66,6 @@ class JSONPublisher(ApplicationSession):
     def __init__(self, config, topic):
         super().__init__(config)
         self.topic = topic
-
     async def onJoin(self, details):
         global global_session, global_loop
         global_session = self
@@ -85,7 +110,7 @@ class PublisherMessageViewer(QWidget):
         layout = QVBoxLayout(self)
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        # Orden de columnas: Hora, Realm, Topic
+        # Columnas: Hora, Realm, Topic
         self.table.setHorizontalHeaderLabels(["Hora", "Realm", "Topic"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -95,7 +120,6 @@ class PublisherMessageViewer(QWidget):
         self.setLayout(layout)
 
     def add_message(self, realm, topic, timestamp, details):
-        # Se eliminan saltos de línea para la vista del log
         if isinstance(details, str):
             details = details.replace("\n", " ")
         row = self.table.rowCount()
@@ -120,8 +144,7 @@ class PublisherTab(QWidget):
 
     def initUI(self):
         mainLayout = QVBoxLayout(self)
-
-        # Grupo de botones de acción
+        # Grupo de acciones
         actionGroup = QGroupBox("Acciones")
         actionLayout = QHBoxLayout()
         self.addMsgButton = QPushButton("Agregar Mensaje")
@@ -139,7 +162,7 @@ class PublisherTab(QWidget):
         actionGroup.setLayout(actionLayout)
         mainLayout.addWidget(actionGroup)
 
-        # Splitter para áreas de mensajes y log
+        # Splitter para área de mensajes y log
         splitter = QSplitter(Qt.Vertical)
         self.msgArea = QScrollArea()
         self.msgArea.setWidgetResizable(True)
@@ -210,8 +233,18 @@ class PublisherTab(QWidget):
             widget = MessageConfigWidget(self.next_id, parent=self)
             widget.realmCombo.setCurrentText(scenario.get("realm", "default"))
             widget.urlEdit.setText(scenario.get("router_url", "ws://127.0.0.1:60001/ws"))
-            widget.topicCombo.setCurrentText(scenario.get("topic", "com.ads.midshmi.topic"))
-            widget.editorWidget.jsonPreview.setPlainText(json.dumps(scenario.get("content", {}), indent=2, ensure_ascii=False))
+            widget.topicCombo.setCurrentText(scenario.get("topic", ""))
+            widget.editorWidget.jsonPreview.setPlainText(
+                json.dumps(scenario.get("content", {}), indent=2, ensure_ascii=False)
+            )
+            widget.editorWidget.commonTimeEdit.setText(scenario.get("time", "00:00:00"))
+            mode = scenario.get("mode", "onDemand")
+            if mode == "programado":
+                widget.editorWidget.programadoRadio.setChecked(True)
+            elif mode == "tiempoSistema":
+                widget.editorWidget.tiempoSistemaRadio.setChecked(True)
+            else:
+                widget.editorWidget.onDemandRadio.setChecked(True)
             self.msgLayout.addWidget(widget)
             self.msgWidgets.append(widget)
             self.next_id += 1
@@ -248,7 +281,7 @@ class MessageConfigWidget(QGroupBox):
     def __init__(self, msg_id, parent=None):
         super().__init__(parent)
         self.msg_id = msg_id
-        self.message_sent = False  # Flag para evitar envíos duplicados
+        self.message_sent = False
         self.setTitle(f"Mensaje #{self.msg_id}")
         self.setCheckable(True)
         self.setChecked(True)
@@ -256,14 +289,12 @@ class MessageConfigWidget(QGroupBox):
         self.initUI()
 
     def initUI(self):
-        # Layout general con grupos para aspecto profesional
         mainLayout = QVBoxLayout()
-
-        # Grupo de configuración de conexión
+        # Grupo: Configuración de Conexión
         connGroup = QGroupBox("Configuración de Conexión")
         connLayout = QFormLayout()
         self.realmCombo = QComboBox()
-        self.realmCombo.addItems(list(REALMS_TOPICS.keys()))
+        self.realmCombo.addItems(list(REALMS_CONFIG.keys()))
         self.realmCombo.setMinimumWidth(300)
         self.realmCombo.currentTextChanged.connect(self.updateTopics)
         self.newRealmEdit = QLineEdit()
@@ -276,26 +307,27 @@ class MessageConfigWidget(QGroupBox):
         realmLayout.addWidget(addRealmButton)
         connLayout.addRow("Realm:", realmLayout)
 
+        # Actualiza automáticamente el router URL según el realm
         self.urlEdit = QLineEdit("ws://127.0.0.1:60001/ws")
         connLayout.addRow("Router URL:", self.urlEdit)
 
         self.topicCombo = QComboBox()
         self.topicCombo.setEditable(True)
-        self.topicCombo.addItems(REALMS_TOPICS.get(self.realmCombo.currentText(), []))
+        self.topicCombo.addItems(REALMS_CONFIG.get(self.realmCombo.currentText(), {}).get("topics", []))
         connLayout.addRow("Topic:", self.topicCombo)
         connGroup.setLayout(connLayout)
         mainLayout.addWidget(connGroup)
 
-        # Grupo de contenido del mensaje
+        # Grupo: Contenido del Mensaje
         contentGroup = QGroupBox("Contenido del Mensaje")
-        contentGroupLayout = QVBoxLayout()
+        contentLayout = QVBoxLayout()
         from .pubEditor import PublisherEditorWidget
         self.editorWidget = PublisherEditorWidget(parent=self)
-        contentGroupLayout.addWidget(self.editorWidget)
-        contentGroup.setLayout(contentGroupLayout)
+        contentLayout.addWidget(self.editorWidget)
+        contentGroup.setLayout(contentLayout)
         mainLayout.addWidget(contentGroup)
 
-        # Botón de envío alineado a la derecha
+        # Botón de envío, alineado a la derecha
         btnLayout = QHBoxLayout()
         btnLayout.addStretch()
         self.sendButton = QPushButton("Enviar Mensaje")
@@ -309,18 +341,23 @@ class MessageConfigWidget(QGroupBox):
         new_realm = self.newRealmEdit.text().strip()
         if new_realm and new_realm not in [self.realmCombo.itemText(i) for i in range(self.realmCombo.count())]:
             self.realmCombo.addItem(new_realm)
-            # Se añade un nuevo realm en la configuración global
-            REALMS_TOPICS[new_realm] = []
+            # Se añade un nuevo realm con URL por defecto y sin topics
+            REALMS_CONFIG[new_realm] = {
+                "router_url": "ws://127.0.0.1:60001",
+                "topics": []
+            }
             self.newRealmEdit.clear()
 
     def updateTopics(self, realm):
-        topics = REALMS_TOPICS.get(realm, [])
+        details = REALMS_CONFIG.get(realm, {})
+        topics = details.get("topics", [])
         self.topicCombo.clear()
         self.topicCombo.addItems(topics)
         self.topicCombo.setEditable(True)
+        router_url = details.get("router_url", "ws://127.0.0.1:60001")
+        self.urlEdit.setText(router_url + "/ws")
 
     def toggleContent(self, checked):
-        # Al colapsar se muestra un resumen en el título
         if not checked:
             topic = self.topicCombo.currentText().strip()
             self.setTitle(f"Mensaje #{self.msg_id} - {topic}")
@@ -330,7 +367,6 @@ class MessageConfigWidget(QGroupBox):
     def sendMessage(self):
         if self.message_sent:
             return
-        # Obtener el modo de envío y tiempo desde el editor (se encuentran en el mismo widget)
         if self.editorWidget.onDemandRadio.isChecked():
             delay = 0
         elif self.editorWidget.programadoRadio.isChecked():
@@ -371,10 +407,18 @@ class MessageConfigWidget(QGroupBox):
             self.parent().addPublisherLog(self.realmCombo.currentText(), topic, publish_time_str, sent_message)
 
     def getConfig(self):
+        if self.editorWidget.programadoRadio.isChecked():
+            mode = "programado"
+        elif self.editorWidget.tiempoSistemaRadio.isChecked():
+            mode = "tiempoSistema"
+        else:
+            mode = "onDemand"
         return {
             "id": self.msg_id,
             "realm": self.realmCombo.currentText(),
             "router_url": self.urlEdit.text().strip(),
             "topic": self.topicCombo.currentText().strip(),
-            "content": json.loads(self.editorWidget.jsonPreview.toPlainText())
+            "content": json.loads(self.editorWidget.jsonPreview.toPlainText()),
+            "mode": mode,
+            "time": self.editorWidget.commonTimeEdit.text().strip()
         }
