@@ -2,7 +2,7 @@
 import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox
+    QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox, QTableWidgetItem
 )
 from PyQt5.QtCore import Qt
 
@@ -90,6 +90,27 @@ class PublisherEditorWidget(QWidget):
             self.buildTreePreview(data)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo cargar el JSON:\n{e}")
+            
+    def updateRealmsTopics(self, realms_topics):
+        self.realms_topics = realms_topics
+        self.realmTable.blockSignals(True)
+        self.realmTable.setRowCount(0)
+        for realm, info in sorted(realms_topics.items()):
+            row = self.realmTable.rowCount()
+            self.realmTable.insertRow(row)
+            item = QTableWidgetItem(realm)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            # Se marca por defecto el realm para que se active
+            item.setCheckState(Qt.Checked)
+            self.realmTable.setItem(row, 0, item)
+            router_url = info.get("router_url", "ws://127.0.0.1:60001/ws")
+            self.realmTable.setItem(row, 1, QTableWidgetItem(router_url))
+        self.realmTable.blockSignals(False)
+        # Si hay al menos un realm, selecciona la primera fila y actualiza la lista de topics
+        if self.realmTable.rowCount() > 0:
+            self.realmTable.selectRow(0)
+            self.onRealmClicked(0, 0)
+
 
     def validateJson(self):
         try:
