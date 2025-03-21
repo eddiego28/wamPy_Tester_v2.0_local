@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt
 def build_tree_items(data):
     """
     Función recursiva para transformar un JSON (dict o list) en elementos
-    (QTreeWidgetItem) que se pueden agregar a un QTreeWidget.
+    (QTreeWidgetItem) que se pueden agregar a un QTreeWidget.J
     """
     items = []
     if isinstance(data, dict):
