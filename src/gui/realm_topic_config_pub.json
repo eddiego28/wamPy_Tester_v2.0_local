@@ -1,0 +1,14 @@
+{
+  "realms": [
+    {
+      "realm": "default",
+      "router_url": "ws://127.0.0.1:60001",
+      "topics": ["MsgEP", "MsgCrEnt"]
+    },
+    {
+      "realm": "default2",
+      "router_url": "ws://127.0.0.1:60002",
+      "topics": ["MsgInitCtr", "MsgAlerts"]
+    }
+  ]
+}
